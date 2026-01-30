@@ -194,9 +194,9 @@ class RsCameraNodeMixin:
     def __init__(
         self,
         *args,
-        rs_resolution: tuple[int, int] = (640, 400),  # [建议] Gemini 2 常用分辨率
-        rs_fps: int = 30,                             # [建议] Gemini 2 常用帧率
-        rs_vfov_deg: float = 58.0,
+        rs_resolution: tuple[int, int] = (640, 400),
+        rs_fps: int = 30,                             
+        rs_vfov_deg: float = 79.3, # [Modified] YM1 config has 79.3 deg FOV
         camera_individual_process: bool = False,
         camera_dead_behavior: Literal["restart", "raise_error", "none"] = "restart",
         main_process_affinity: set[int] | None = None,

@@ -93,10 +93,9 @@ class ParkourAgent(OnboardAgent):
                             self._zero_action_joints[i] = 1.0
 
     def _parse_depth_image_config(self):
-        self.output_resolution = [
-            self.cfg["scene"]["camera"]["pattern_cfg"]["width"],
-            self.cfg["scene"]["camera"]["pattern_cfg"]["height"],
-        ]
+        # [Modified] Hardcoded for ym1_16dof_loco task
+        # Training config: resized = (64, 64)
+        self.output_resolution = [64, 64] # [width, height]
 
         self.depth_range = self.cfg["scene"]["camera"]["noise_pipeline"]["depth_normalization"]["depth_range"]
 
@@ -107,8 +106,11 @@ class ParkourAgent(OnboardAgent):
         else:
             self.depth_output_range = self.depth_range
 
-        if "crop_and_resize" in self.cfg["scene"]["camera"]["noise_pipeline"]:
-            self.crop_region = self.cfg["scene"]["camera"]["noise_pipeline"]["crop_and_resize"]["crop_region"]
+        # [Modified] Hardcoded cropping to match training config: crop_pixels = [10, 20, 10, 5] (Left, Top, Right, Bottom)
+        # agent script uses [Top, Bottom, Left, Right]
+        # Top=20, Bottom=5, Left=10, Right=10
+        self.crop_region = [20, 5, 10, 10] 
+
         if "gaussian_blur" in self.cfg["scene"]["camera"]["noise_pipeline"]:
             self.gaussian_kernel_size = (
                 self.cfg["scene"]["camera"]["noise_pipeline"]["gaussian_blur"]["kernel_size"],
