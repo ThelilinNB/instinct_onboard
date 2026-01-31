@@ -119,16 +119,9 @@ class ParkourAgent(OnboardAgent):
             self.gaussian_sigma = self.cfg["scene"]["camera"]["noise_pipeline"]["gaussian_blur"]["sigma"]
         if "blind_spot" in self.cfg["scene"]["camera"]["noise_pipeline"]:
             self.blind_spot_crop = self.cfg["scene"]["camera"]["noise_pipeline"]["blind_spot"]["crop_region"]
-        self.depth_width = (
-            self.output_resolution[0] - self.crop_region[2] - self.crop_region[3]
-            if hasattr(self, "crop_region")
-            else self.output_resolution[0]
-        )
-        self.depth_height = (
-            self.output_resolution[1] - self.crop_region[0] - self.crop_region[1]
-            if hasattr(self, "crop_region")
-            else self.output_resolution[1]
-        )
+        # [Modified] 先裁剪后 resize，输出尺寸固定为 output_resolution (64x64)
+        self.depth_width = self.output_resolution[0]  # 64
+        self.depth_height = self.output_resolution[1]  # 64
         # For sample resize
         square_size = int(self.rs_resolution[0] // self.output_resolution[0])
         rows, cols = self.rs_resolution[1], self.rs_resolution[0]
@@ -285,20 +278,36 @@ class ParkourAgent(OnboardAgent):
         return actions[mask]
 
     def refresh_depth_frame(self):
-        """Return the depth image."""
+        """
+        Return the depth image.
+        [Modified] 流程与 deploy_mujoco_with_loco_onnx.py 对齐：先裁剪再 resize
+        """
         self.ros_node.refresh_rs_data()
         depth_image_np: np.ndarray = self.ros_node.rs_depth_data
-        # normalize based on given range
-        depth_image = cv2.resize(depth_image_np, self.output_resolution, interpolation=cv2.INTER_NEAREST)
-
+        
+        # [Modified] Step 1: 先在原始分辨率上裁剪
+        # crop_region = [top, bottom, left, right] 
+        # 对应 mujoco 版的 crop_size = [left, top, right, bottom]
         if hasattr(self, "crop_region"):
-            shape = depth_image.shape
-            x1, x2, y1, y2 = self.crop_region
-            depth_image = depth_image[x1 : shape[0] - x2, y1 : shape[1] - y2]
+            h, w = depth_image_np.shape
+            top, bottom, left, right = self.crop_region
+            # 计算裁剪比例 (基于 64x64 的裁剪像素数，换算到原始分辨率)
+            scale_h = h / self.output_resolution[1]  # 原始高度 / 64
+            scale_w = w / self.output_resolution[0]  # 原始宽度 / 64
+            crop_top = int(top * scale_h)
+            crop_bottom = int(bottom * scale_h)
+            crop_left = int(left * scale_w)
+            crop_right = int(right * scale_w)
+            depth_image_np = depth_image_np[crop_top:h-crop_bottom, crop_left:w-crop_right]
+        
+        # [Modified] Step 2: 裁剪后再 resize 到 64x64
+        depth_image = cv2.resize(depth_image_np, (self.output_resolution[0], self.output_resolution[1]), interpolation=cv2.INTER_LINEAR)
 
+        # Step 3: 处理无效深度值 (inpaint)
         mask = (depth_image < 0.2).astype(np.uint8)
         depth_image = cv2.inpaint(depth_image, mask, 3, cv2.INPAINT_NS)
 
+        # Step 4: 盲区处理 (如果有配置)
         if hasattr(self, "blind_spot_crop"):
             shape = depth_image.shape
             x1, x2, y1, y2 = self.blind_spot_crop
@@ -306,14 +315,18 @@ class ParkourAgent(OnboardAgent):
             depth_image[shape[0] - x2 :, :] = 0
             depth_image[:, :y1] = 0
             depth_image[:, shape[1] - y2 :] = 0
+            
+        # Step 5: 高斯模糊 (如果有配置)
         if hasattr(self, "gaussian_kernel_size"):
             depth_image = cv2.GaussianBlur(
                 depth_image, self.gaussian_kernel_size, self.gaussian_sigma, self.gaussian_sigma
             )
 
+        # Step 6: 归一化到 [near, far] 范围
         filt_m = np.clip(depth_image, self.depth_range[0], self.depth_range[1])
         filt_norm = (filt_m - self.depth_range[0]) / (self.depth_range[1] - self.depth_range[0])
 
+        # Step 7: 映射到输出范围 (通常是 [-0.5, 0.5])
         output_norm = filt_norm * (self.depth_output_range[1] - self.depth_output_range[0]) + self.depth_output_range[0]
         self.depth_image_buffer.append(output_norm)
 
